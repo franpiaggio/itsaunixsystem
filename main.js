@@ -4,7 +4,7 @@
 // ============================================================
 import * as THREE from "three";
 import { FS_ROOT } from "./data.js";
-import { WinManager } from "./windows.js?v=21";
+import { WinManager } from "./windows.js?v=24";
 
 // ---------------- palette (sampled from movie stills) ----------------
 const COL = {
@@ -639,7 +639,9 @@ void main() {
   vec2 st = gl_FragCoord.xy / resolution;
   vec2 p = st * 2.0 - 1.0;
   float r2 = dot(p, p);
-  vec2 q = (p * (1.0 + uCurve * r2)) * 0.5 + 0.5;
+  // normalized barrel: corners map exactly to the frame edge, nothing samples
+  // outside the picture (no cropped/ghosted first rows)
+  vec2 q = (p * (1.0 + uCurve * r2) / (1.0 + 2.0 * uCurve)) * 0.5 + 0.5;
 
   float dx = (q.x - 0.5) * r2 * 0.012 * uConverge;
 
@@ -667,9 +669,9 @@ void main() {
       : vec3(1.0 - uMask, 1.0 - uMask, 1.0);
   col *= grille * (1.0 + uMask * 0.4);
 
-  vec2 edge = smoothstep(0.0, 0.006, q) * (1.0 - smoothstep(0.994, 1.0, q));
+  vec2 edge = smoothstep(0.0, 0.0025, q) * (1.0 - smoothstep(0.9975, 1.0, q));
   col *= edge.x * edge.y;
-  col *= 1.0 - 0.15 * smoothstep(0.7, 1.8, r2);
+  col *= 1.0 - 0.07 * smoothstep(0.8, 1.9, r2);
 
   gl_FragColor = vec4(col, texture2D(uInput, q).a);
 }
@@ -740,8 +742,8 @@ const ntscMat = shaderPass(NTSC_FRAG, {
 });
 const tubeMat = shaderPass(TUBE_FRAG, {
   uInput: { value: null }, uHalo: { value: null }, resolution: { value: new THREE.Vector2() },
-  uCurve: { value: 0.025 }, uBeam: { value: 0.55 }, uConverge: { value: 0.45 },
-  uHaloAmt: { value: 0.20 }, uMask: { value: 0.05 }, uGain: { value: 1.15 },
+  uCurve: { value: 0.012 }, uBeam: { value: 0.55 }, uConverge: { value: 0.22 },
+  uHaloAmt: { value: 0.14 }, uMask: { value: 0.05 }, uGain: { value: 1.12 },
 });
 const copyMat = shaderPass(COPY_FRAG, { uInput: { value: null }, resolution: { value: new THREE.Vector2() } });
 const composeMat = shaderPass(COMPOSE_FRAG, {
@@ -812,21 +814,23 @@ function renderFrame(timeSec) {
   // 1. scene
   renderer.setRenderTarget(rtScene);
   renderer.render(scene, camera);
-  // 1b. composite UI canvas over the scene (inside the tube)
-  composeMat.uniforms.uScene.value = rtScene.texture;
   composeMat.uniforms.uUI.value = uiTex;
   if (!postEnabled) {
+    composeMat.uniforms.uScene.value = rtScene.texture;
     runPass(composeMat, null);
     renderer.setRenderTarget(null);
     return;
   }
-  runPass(composeMat, rtCompose);
-  // 2. ntsc decode at full res (full-res input keeps distant text readable)
-  ntscMat.uniforms.uInput.value = rtCompose.texture;
+  // 2. ntsc decode on the 3D scene only (the UI skips the composite-signal
+  // smear so windows stay readable, but still goes through the tube below)
+  ntscMat.uniforms.uInput.value = rtScene.texture;
   ntscMat.uniforms.time.value = timeSec;
   runPass(ntscMat, rtDecode);
-  // 4. halation: blur decode at half res (H then V)
-  copyMat.uniforms.uInput.value = rtDecode.texture;
+  // 3. composite the UI over the decoded scene (post-NTSC, pre-tube)
+  composeMat.uniforms.uScene.value = rtDecode.texture;
+  runPass(composeMat, rtCompose);
+  // 4. halation: blur the composite at half res (H then V)
+  copyMat.uniforms.uInput.value = rtCompose.texture;
   runPass(copyMat, rtHaloA);
   blurMat.uniforms.uInput.value = rtHaloA.texture;
   blurMat.uniforms.uDir.value.set(1, 0);
@@ -835,7 +839,7 @@ function renderFrame(timeSec) {
   blurMat.uniforms.uDir.value.set(0, 1);
   runPass(blurMat, rtHaloA);
   // 5. tube composite to screen
-  tubeMat.uniforms.uInput.value = rtDecode.texture;
+  tubeMat.uniforms.uInput.value = rtCompose.texture;
   tubeMat.uniforms.uHalo.value = rtHaloA.texture;
   runPass(tubeMat, null);
   renderer.setRenderTarget(null);

@@ -196,20 +196,23 @@ const DRAW = {
     for (let i = 0; i < 6; i++) {
       ctx.strokeRect(x + 8 + rng() * (w - 60), my + 8 + rng() * (mh - 40), 18 + rng() * 34, 10 + rng() * 18);
     }
-    // lock markers
+    // lock markers — one per grid slot so labels never overlap
     const n = 4 + Math.floor(rng() * 3);
+    const slots = [0, 1, 2, 3, 4, 5, 6, 7, 8].sort(() => rng() - 0.5).slice(0, n);
     for (let i = 0; i < n; i++) {
-      const lx = x + 20 + rng() * (w - 70), ly = my + 18 + rng() * (mh - 34);
+      const col = slots[i] % 3, row = Math.floor(slots[i] / 3);
+      const lx = x + 24 + col * ((w - 90) / 2) + rng() * 14;
+      const ly = my + 22 + row * ((mh - 44) / 2) + rng() * 10;
       const col = secured ? P.greenBright : P.salmon;
       ctx.fillStyle = col;
       ctx.beginPath(); ctx.arc(lx, ly, 7, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = P.navy; ctx.fillRect(lx - 1.5, ly - 3, 3, 6);
-      text(ctx, secured ? "SECURED" : "UNLOCKED", lx + 11, ly + 4, MONOB(9), col);
+      text(ctx, secured ? "SECURED" : "UNLOCKED", lx + 11, ly + 4, MONOB(12), col);
     }
     // toggle for fun (narrative: lock/unlock the sector)
     this.button(ctx, secured ? "UNLOCK SECTOR" : "SECURE SECTOR", 12, this.h - 36, 130, 22,
       () => { this.state.secured = !secured; });
-    text(ctx, `grid ${this.file.size} kb`, this.x + this.w - 16, this.y + this.h - 20, MONO(11), P.titleText, "right");
+    text(ctx, `grid ${this.file.size} kb`, this.x + this.w - 16, this.y + this.h - 20, MONO(12), P.titleText, "right");
   },
 
   // Motif control panel: switch rows
@@ -240,7 +243,7 @@ const DRAW = {
     insetBox(ctx, this.x + 10, this.y + 33, this.w - 20, this.h - 46, P.paper);
     const rng = mulberry32(hashStr(this.file.name));
     let yy = 52;
-    text(ctx, `# ${this.path}`, this.x + 18, this.y + yy, MONO(11), "#666"); yy += 16;
+    text(ctx, `# ${this.path}`, this.x + 18, this.y + yy, MONO(12), "#666"); yy += 16;
     for (let i = 0; i < 10; i++) {
       const hh = String(Math.floor(rng() * 24)).padStart(2, "0");
       const mm = String(Math.floor(rng() * 60)).padStart(2, "0");
@@ -286,9 +289,9 @@ const DRAW = {
     // REC + cam id
     if (Math.floor(t * 2) % 2) { ctx.fillStyle = P.red; ctx.beginPath(); ctx.arc(x + 14, y + 14, 5, 0, 7); ctx.fill(); }
     text(ctx, "REC", x + 24, y + 18, MONOB(11), "#eee");
-    text(ctx, "CAM " + this.file.name.replace(/\.avi$/, "").toUpperCase(), x + 8, y + h - 8, MONO(11), "#cdd5e0");
+    text(ctx, "CAM " + this.file.name.replace(/\.avi$/, "").toUpperCase(), x + 8, y + h - 8, MONO(12), "#cdd5e0");
     const s = Math.floor(t) % 60, m = Math.floor(t / 60) % 60;
-    text(ctx, `00:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`, x + w - 8, y + 18, MONO(11), "#cdd5e0", "right");
+    text(ctx, `00:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`, x + w - 8, y + 18, MONO(12), "#cdd5e0", "right");
     this.button(ctx, "HOLD", 12, this.h - 32, 70, 20, () => {});
     this.button(ctx, "NEXT", 90, this.h - 32, 70, 20, () => {});
   },
@@ -302,7 +305,7 @@ const DRAW = {
     let yy = 72;
     for (let r = 0; r < 8; r++) {
       let xx = this.x + 20;
-      text(ctx, String(r * 24).padStart(4, "0"), xx, this.y + yy, MONO(11), "#888");
+      text(ctx, String(r * 24).padStart(4, "0"), xx, this.y + yy, MONO(12), "#888");
       xx += 44;
       for (let c = 0; c < 24; c++) {
         const b = bases[Math.floor(rng() * 4)];
@@ -313,7 +316,7 @@ const DRAW = {
     }
     const fill = 8 + Math.floor(this.rng() * 20);
     insetBox(ctx, this.x + 10, this.y + this.h - 36, this.w - 20, 24, P.statusBg);
-    text(ctx, `viable — frog DNA fill ${fill}%  ·  "life finds a way"`, this.x + this.w / 2, this.y + this.h - 19, SANS(11), P.titleText, "center");
+    text(ctx, `viable — frog DNA fill ${fill}%  ·  "life finds a way"`, this.x + this.w / 2, this.y + this.h - 19, SANS(12), P.titleText, "center");
   },
 
   rec(ctx) {
@@ -336,13 +339,13 @@ const DRAW = {
     ];
     let yy = 56;
     for (const [k, v] of rows) {
-      text(ctx, k, px + pw + 16, this.y + yy, SANSB(10), P.faceDim === P.face ? "#555" : "#59647c");
+      text(ctx, k, px + pw + 16, this.y + yy, SANSB(11), P.faceDim === P.face ? "#555" : "#59647c");
       text(ctx, v, px + pw + 16, this.y + yy + 14, MONOB(12), k === "STATUS" && v === "REVOKED" ? P.red : P.ink);
       yy += 32;
     }
     insetBox(ctx, this.x + 12, this.y + this.h - 34, this.w - 24, 22, P.statusBg);
     text(ctx, who.startsWith("nedry") ? "ACCESS REVOKED — CONTACT MR. ARNOLD" : "INGEN PERSONNEL FILE",
-      this.x + this.w / 2, this.y + this.h - 19, HEAVYI(10), P.titleText, "center");
+      this.x + this.w / 2, this.y + this.h - 19, HEAVYI(12), P.titleText, "center");
   },
 
   // VEHICLE-style module runner (the movie panel, generalized)
@@ -390,7 +393,7 @@ function drawVehiclePanel(ctx, statusText, withGlitches) {
   bevel(ctx, ix + 10, iy + 64, iw - 20, 46, true, P.statusBg);
   ctx.strokeStyle = "#222"; ctx.strokeRect(ix + 12, iy + 66, iw - 24, 42);
   text(ctx, statusText, this.x + this.w / 2, iy + 86, HEAVYI(14), P.titleText, "center");
-  text(ctx, "VOLUME --- NEDRYLAND JP", this.x + this.w / 2, iy + 102, SANSB(10), P.titleText, "center");
+  text(ctx, "VOLUME --- NEDRYLAND JP", this.x + this.w / 2, iy + 102, SANSB(11), P.titleText, "center");
   // transport
   const by = 58 + ih + 8;
   this.button(ctx, "HOLD", 14, by, 82, 22, () => { this.state.status = "ON HOLD"; });
@@ -412,7 +415,7 @@ function drawVehiclePanel(ctx, statusText, withGlitches) {
     let ly = gy + 26;
     for (const it of items) {
       bevel(ctx, this.x + 16, this.y + ly, 52, 16, true, "#79b586");
-      text(ctx, "CLEAR", this.x + 42, this.y + ly + 12, SANSB(9), "#0e2916", "center");
+      text(ctx, "CLEAR", this.x + 42, this.y + ly + 12, SANSB(11), "#0e2916", "center");
       text(ctx, "- " + it, this.x + 76, this.y + ly + 13, SANSB(11), P.titleText);
       ly += 20;
     }
