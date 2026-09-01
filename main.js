@@ -742,41 +742,6 @@ void main() {
 }
 `;
 
-// hard bright-pass for the phosphor bloom (hard threshold, per feedback:
-// "phosphor bloom sells that CRT more than the scanlines")
-const THRESH_FRAG = `
-precision highp float;
-uniform sampler2D uInput;
-uniform vec2 resolution;
-uniform float uThresh;
-void main() {
-  vec2 st = gl_FragCoord.xy / resolution;
-  vec3 c = texture2D(uInput, st).rgb;
-  float l = max(c.r, max(c.g, c.b));
-  gl_FragColor = vec4(c * step(uThresh, l), 1.0);
-}
-`;
-
-// final phosphor composite: 1px vertical kernel (kills text aliasing) + bloom add
-const PHOSPHOR_FRAG = `
-precision highp float;
-uniform sampler2D uInput;
-uniform sampler2D uBloom;
-uniform vec2 resolution;
-uniform float uBloomAmt;
-uniform float uSoftY;
-void main() {
-  vec2 st = gl_FragCoord.xy / resolution;
-  float px = 1.0 / resolution.y;
-  vec3 c0 = texture2D(uInput, st).rgb;
-  vec3 cv = c0 * 0.5
-          + 0.25 * texture2D(uInput, st + vec2(0.0, px)).rgb
-          + 0.25 * texture2D(uInput, st - vec2(0.0, px)).rgb;
-  vec3 base = mix(c0, cv, uSoftY);
-  gl_FragColor = vec4(base + texture2D(uBloom, st).rgb * uBloomAmt, 1.0);
-}
-`;
-
 const COPY_FRAG = `
 precision highp float;
 uniform sampler2D uInput;
@@ -834,27 +799,18 @@ const copyMat = shaderPass(COPY_FRAG, { uInput: { value: null }, resolution: { v
 const composeMat = shaderPass(COMPOSE_FRAG, {
   uScene: { value: null }, uUI: { value: null }, resolution: { value: new THREE.Vector2() },
 });
-const threshMat = shaderPass(THRESH_FRAG, {
-  uInput: { value: null }, resolution: { value: new THREE.Vector2() }, uThresh: { value: 0.55 },
-});
-const phosphorMat = shaderPass(PHOSPHOR_FRAG, {
-  uInput: { value: null }, uBloom: { value: null }, resolution: { value: new THREE.Vector2() },
-  uBloomAmt: { value: 0.85 }, uSoftY: { value: 0.6 },
-});
-let bloomRadius = 9;
 const blurMat = shaderPass(BLUR_FRAG, {
   uInput: { value: null }, resolution: { value: new THREE.Vector2() },
   uDir: { value: new THREE.Vector2(1, 0) }, uRadius: { value: 22 },
 });
 
-let rtScene, rtCompose, rtDecode, rtPost, rtHaloA, rtHaloB;
+let rtScene, rtCompose, rtDecode, rtHaloA, rtHaloB;
 function makeTargets() {
   const w = window.innerWidth, h = window.innerHeight;
-  for (const rt of [rtScene, rtCompose, rtDecode, rtPost, rtHaloA, rtHaloB]) rt && rt.dispose();
+  for (const rt of [rtScene, rtCompose, rtDecode, rtHaloA, rtHaloB]) rt && rt.dispose();
   rtScene = new THREE.WebGLRenderTarget(w, h, { depthBuffer: true });
   rtCompose = new THREE.WebGLRenderTarget(w, h, { depthBuffer: false });
   rtDecode = new THREE.WebGLRenderTarget(w, h, { depthBuffer: false });
-  rtPost = new THREE.WebGLRenderTarget(w, h, { depthBuffer: false });
   rtHaloA = new THREE.WebGLRenderTarget(w >> 1, h >> 1, { depthBuffer: false });
   rtHaloB = new THREE.WebGLRenderTarget(w >> 1, h >> 1, { depthBuffer: false });
 }
@@ -913,18 +869,7 @@ function runPass(mat, target) {
   renderer.render(postScene, postCam);
 }
 
-let ntscOn = true, tubeOn = false, phosphorOn = true; // per-shader toggles (lil-gui checkboxes)
-
-function blurHalfRes(srcTex, radius) {
-  blurMat.uniforms.uRadius.value = radius;
-  blurMat.uniforms.uInput.value = srcTex;
-  blurMat.uniforms.uDir.value.set(1, 0);
-  runPass(blurMat, rtHaloB);
-  blurMat.uniforms.uInput.value = rtHaloB.texture;
-  blurMat.uniforms.uDir.value.set(0, 1);
-  runPass(blurMat, rtHaloA);
-  return rtHaloA.texture;
-}
+let ntscOn = true, tubeOn = false; // per-shader toggles (lil-gui checkboxes)
 
 function renderFrame(timeSec) {
   drawUI(timeSec);
@@ -934,7 +879,6 @@ function renderFrame(timeSec) {
   composeMat.uniforms.uUI.value = uiTex;
   const useNtsc = postEnabled && ntscOn;
   const useTube = postEnabled && tubeOn;
-  const usePhosphor = postEnabled && phosphorOn;
   // 2. ntsc decode on the 3D scene only (the UI skips the composite-signal
   // smear so windows stay readable, but still goes through the tube below)
   let sceneTex = rtScene.texture;
@@ -946,29 +890,24 @@ function renderFrame(timeSec) {
   }
   // 3. composite the UI over the (decoded) scene
   composeMat.uniforms.uScene.value = sceneTex;
-  if (!usePhosphor && !useTube) {
+  if (!useTube) {
     runPass(composeMat, null);
     renderer.setRenderTarget(null);
     return;
   }
   runPass(composeMat, rtCompose);
-  let current = rtCompose;
-  // 4. phosphor bloom: hard bright-pass -> half-res blur -> add, plus a
-  // 1px vertical kernel on the base to kill text aliasing
-  if (usePhosphor) {
-    threshMat.uniforms.uInput.value = current.texture;
-    runPass(threshMat, rtHaloA); // bright-pass seed at half res
-    const bloomTex = blurHalfRes(rtHaloA.texture, bloomRadius);
-    phosphorMat.uniforms.uInput.value = current.texture;
-    phosphorMat.uniforms.uBloom.value = bloomTex;
-    runPass(phosphorMat, useTube ? rtPost : null);
-    if (!useTube) { renderer.setRenderTarget(null); return; }
-    current = rtPost;
-  }
-  // 5. halation + tube composite to screen
-  const haloTex = blurHalfRes(current.texture, 22);
-  tubeMat.uniforms.uInput.value = current.texture;
-  tubeMat.uniforms.uHalo.value = haloTex;
+  // 4. halation: blur the composite at half res (H then V)
+  copyMat.uniforms.uInput.value = rtCompose.texture;
+  runPass(copyMat, rtHaloA);
+  blurMat.uniforms.uInput.value = rtHaloA.texture;
+  blurMat.uniforms.uDir.value.set(1, 0);
+  runPass(blurMat, rtHaloB);
+  blurMat.uniforms.uInput.value = rtHaloB.texture;
+  blurMat.uniforms.uDir.value.set(0, 1);
+  runPass(blurMat, rtHaloA);
+  // 5. tube composite to screen
+  tubeMat.uniforms.uInput.value = rtCompose.texture;
+  tubeMat.uniforms.uHalo.value = rtHaloA.texture;
   runPass(tubeMat, null);
   renderer.setRenderTarget(null);
 }
@@ -996,14 +935,7 @@ const TUBE_DEFS = [
 
 const gui = new GUI({ title: "JP CRT tweaks" });
 {
-  const toggles = { ntsc: true, tube: false, phosphor: true };
-  const fP = gui.addFolder("PHOSPHOR");
-  fP.add(toggles, "phosphor").name("enabled").onChange((v) => (phosphorOn = v));
-  fP.add(threshMat.uniforms.uThresh, "value", 0, 1, 0.01).name("threshold");
-  fP.add(phosphorMat.uniforms.uBloomAmt, "value", 0, 2, 0.01).name("bloom amount");
-  const radiusProxy = { r: bloomRadius };
-  fP.add(radiusProxy, "r", 1, 30, 1).name("bloom radius").onChange((v) => (bloomRadius = v));
-  fP.add(phosphorMat.uniforms.uSoftY, "value", 0, 1, 0.01).name("soften 1px vert");
+  const toggles = { ntsc: true, tube: false };
   const fN = gui.addFolder("NTSC");
   fN.add(toggles, "ntsc").name("enabled").onChange((v) => (ntscOn = v));
   for (const [key, label, min, max, step] of NTSC_DEFS)
@@ -1015,15 +947,9 @@ const gui = new GUI({ title: "JP CRT tweaks" });
   const misc = {
     post: true,
     copyParams() {
-      const out = { ntsc: {}, tube: {}, phosphor: {} };
+      const out = { ntsc: {}, tube: {} };
       for (const [key] of NTSC_DEFS) out.ntsc[key] = +ntscMat.uniforms[key].value.toFixed(3);
       for (const [key] of TUBE_DEFS) out.tube[key] = +tubeMat.uniforms[key].value.toFixed(3);
-      out.phosphor = {
-        uThresh: +threshMat.uniforms.uThresh.value.toFixed(3),
-        uBloomAmt: +phosphorMat.uniforms.uBloomAmt.value.toFixed(3),
-        radius: bloomRadius,
-        uSoftY: +phosphorMat.uniforms.uSoftY.value.toFixed(3),
-      };
       const txt = JSON.stringify(out, null, 2);
       navigator.clipboard.writeText(txt).catch(() => {});
       console.log("[shader params]", txt);
