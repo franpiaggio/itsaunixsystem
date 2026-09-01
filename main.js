@@ -3,7 +3,8 @@
 // fsn (SGI IRIX File System Navigator) replica — Jurassic Park
 // ============================================================
 import * as THREE from "three";
-import { FS_ROOT, SPECIAL_FILES } from "./data.js";
+import { FS_ROOT } from "./data.js";
+import { WinManager } from "./windows.js?v=21";
 
 // ---------------- palette (sampled from movie stills) ----------------
 const COL = {
@@ -378,7 +379,7 @@ function flyToDir(anchor) {
     fromPitch: nav.pitch, toPitch: -0.24,
     t: 0, dur: 1.9,
   };
-  document.getElementById("pathbar").textContent = PATH_BY_NODE.get(anchor.node) || "/";
+  setPath(PATH_BY_NODE.get(anchor.node) || "/");
 }
 
 // swoop down onto a file box, movie style
@@ -395,8 +396,10 @@ function flyToFile(mesh) {
     t: 0, dur: 1.6,
   };
   const dirPath = PATH_BY_NODE.get(mesh.userData.dirNode) || "";
-  document.getElementById("pathbar").textContent = dirPath + "/" + mesh.userData.node.name;
+  setPath(dirPath + "/" + mesh.userData.node.name);
 }
+
+function setPath(p) { uiPath = p; }
 
 // keyboard
 const keys = {};
@@ -404,19 +407,24 @@ window.addEventListener("keydown", (e) => {
   if (e.target.closest && e.target.closest(".win98")) return;
   keys[e.code] = true;
   if (e.code === "Enter" && selected) openFileWindow(selected.userData);
-  if (e.code === "Escape") clearSelection();
+  if (e.code === "Escape") {
+    if (wm.wins.length) wm.closeTop();
+    else clearSelection();
+  }
 });
 window.addEventListener("keyup", (e) => (keys[e.code] = false));
 
 // mouse: drag look + click pick
 const raycaster = new THREE.Raycaster();
 const mouseNDC = new THREE.Vector2();
-let dragging = false, dragMoved = 0, lastX = 0, lastY = 0, pressedOnCanvas = false;
+let dragging = false, dragMoved = 0, lastX = 0, lastY = 0, pressedOnCanvas = false, uiCapture = false;
 
 canvas.addEventListener("pointerdown", (e) => {
+  if (wm.down(e.clientX, e.clientY)) { uiCapture = true; return; } // in-tube window grabbed it
   dragging = true; pressedOnCanvas = true; dragMoved = 0; lastX = e.clientX; lastY = e.clientY;
 });
 window.addEventListener("pointermove", (e) => {
+  if (uiCapture) { wm.move(e.clientX, e.clientY); return; }
   if (!dragging) return;
   const dx = e.clientX - lastX, dy = e.clientY - lastY;
   dragMoved += Math.abs(dx) + Math.abs(dy);
@@ -426,13 +434,17 @@ window.addEventListener("pointermove", (e) => {
   flyAnim = null;
 });
 window.addEventListener("pointerup", (e) => {
+  if (uiCapture) { wm.up(e.clientX, e.clientY); uiCapture = false; return; }
   dragging = false;
   if (!pressedOnCanvas) return; // stray pointerup (focus click, window switch)
   pressedOnCanvas = false;
   if (dragMoved > 6) return; // it was a drag, not a click
   pick(e.clientX, e.clientY, false);
 });
-canvas.addEventListener("dblclick", (e) => pick(e.clientX, e.clientY, true));
+canvas.addEventListener("dblclick", (e) => {
+  if (wm.top(e.clientX, e.clientY)) return;
+  pick(e.clientX, e.clientY, true);
+});
 
 // wheel / trackpad scroll = dolly zoom along the view direction
 canvas.addEventListener("wheel", (e) => {
@@ -489,140 +501,10 @@ function stepNav(dt) {
   nav.pos.y = Math.max(2.2, nav.pos.y);
 }
 
-// ---------------- windows 98 windows ----------------
-let winZ = 100;
-let winCount = 0;
-
-function createWindow(title, contentHTML, opts = {}) {
-  const host = document.getElementById("windows");
-  const el = document.createElement("div");
-  el.className = "win98";
-  el.style.left = 90 + (winCount % 7) * 34 + "px";
-  el.style.top = 70 + (winCount % 7) * 30 + "px";
-  el.style.zIndex = ++winZ;
-  winCount++;
-  el.innerHTML = `
-    <div class="titlebar">
-      <span class="title">${title}</span>
-      <div class="btn btn-min">_</div>
-      <div class="btn btn-max">□</div>
-      <div class="btn btn-close">✕</div>
-    </div>
-    <div class="menubar"><span>File</span><span>Edit</span><span>View</span><span>Help</span></div>
-    ${contentHTML}
-    <div class="statusbar"><div class="cell">${opts.status || "Ready"}</div><div class="cell" style="flex:0 0 90px">JP/IRIX 4.0.5</div></div>
-  `;
-  host.appendChild(el);
-
-  // z-order on click
-  el.addEventListener("pointerdown", () => {
-    el.style.zIndex = ++winZ;
-    document.querySelectorAll(".win98").forEach((w) => w.classList.add("inactive"));
-    el.classList.remove("inactive");
-  });
-  document.querySelectorAll(".win98").forEach((w) => w.classList.add("inactive"));
-  el.classList.remove("inactive");
-
-  el.querySelector(".btn-close").addEventListener("click", () => el.remove());
-  el.querySelector(".btn-min").addEventListener("click", () => {
-    const c = el.querySelector(".content");
-    if (c) c.style.display = c.style.display === "none" ? "" : "none";
-  });
-
-  // drag by titlebar
-  const bar = el.querySelector(".titlebar");
-  let dx = 0, dy = 0, moving = false;
-  bar.addEventListener("pointerdown", (e) => {
-    if (e.target.classList.contains("btn")) return;
-    moving = true;
-    dx = e.clientX - el.offsetLeft;
-    dy = e.clientY - el.offsetTop;
-    bar.setPointerCapture(e.pointerId);
-  });
-  bar.addEventListener("pointermove", (e) => {
-    if (!moving) return;
-    el.style.left = e.clientX - dx + "px";
-    el.style.top = e.clientY - dy + "px";
-  });
-  bar.addEventListener("pointerup", () => (moving = false));
-  return el;
-}
-
-function fakeFileBody(file, dirNode) {
-  const rng = mulberry32(hashStr(file.name));
-  const lines = [];
-  const path = (PATH_BY_NODE.get(dirNode) || "") + "/" + file.name;
-  lines.push(`# ${path}`);
-  lines.push(`# size: ${file.size} KB   mode: -rw-r--r--   owner: dnedry`);
-  lines.push("");
-  if (/\.(cfg|rc|sta)$/.test(file.name)) {
-    const keys = ["enabled", "voltage", "relay", "timeout_ms", "channel", "gain", "port", "retries"];
-    for (let i = 0; i < 7; i++) lines.push(`${keys[i % keys.length]}_${i} = ${Math.floor(rng() * 5000)}`);
-  } else if (/\.(log)$/.test(file.name)) {
-    for (let i = 0; i < 9; i++) {
-      const hh = String(Math.floor(rng() * 24)).padStart(2, "0");
-      const mm = String(Math.floor(rng() * 60)).padStart(2, "0");
-      lines.push(`06/11 ${hh}:${mm}  ${rng() > 0.75 ? "WARN" : "info"}  sector ${Math.floor(rng() * 90)} ok`);
-    }
-  } else if (/\.(db|dat|gen|avi|mid|rec|rte|mnu|lic|tmp|rel)$/.test(file.name)) {
-    for (let i = 0; i < 8; i++) {
-      let row = String(i * 16).padStart(6, "0") + "  ";
-      for (let j = 0; j < 8; j++) row += Math.floor(rng() * 0xffff).toString(16).padStart(4, "0") + " ";
-      lines.push(row);
-    }
-  } else {
-    lines.push("Welcome to Jurassic Park.");
-    lines.push("The property of InGen Corporation.");
-    lines.push("Unauthorized access will be prosecuted.");
-  }
-  return lines.join("\n");
-}
-
+// ---------------- file windows (drawn in-tube, see windows.js) ----------------
 function openFileWindow(ud) {
   const file = ud.node, dirNode = ud.dirNode;
-  const special = SPECIAL_FILES[file.name];
-
-  if (special === "magic") {
-    let rows = "";
-    for (let i = 0; i < 14; i++) rows += `<span class="magic-word">YOU DIDN'T SAY THE MAGIC WORD!</span>\n`;
-    createWindow(`⚠ ${file.name} — ACCESS VIOLATION`, `
-      <div class="content">Ah ah ah! You didn't say the magic word!\n${rows}</div>
-    `, { status: "PERMISSION DENIED — dnedry" });
-    return;
-  }
-  if (special === "reboot") {
-    const el = createWindow(`${file.name} — System Control`, `
-      <div class="content gray">
-        <div class="reboot-box">
-          <div class="big">REBOOTING SYSTEM...</div>
-          <div class="small">VOLUME — NEDRYLAND JP</div>
-        </div>
-        <div class="btnrow">
-          <div class="b98">HOLD</div><div class="b98">QUIT</div><div class="b98">NEW</div><div class="b98 do-boot">EXECUTE</div>
-        </div>
-        <div style="text-align:center;margin-top:8px;font-size:11px" class="boot-msg">&nbsp;</div>
-      </div>
-    `, { status: "root access required" });
-    el.querySelector(".do-boot").addEventListener("click", () => {
-      const m = el.querySelector(".boot-msg");
-      m.textContent = "Boot Successful — CLEAR. System Secured.";
-    });
-    return;
-  }
-  if (special === "hammond") {
-    createWindow(file.name, `
-      <div class="content">"I don't blame people for their mistakes.
-But I do ask that they pay for them."
-
-    — J. Hammond
-
-We spared no expense.</div>
-    `, { status: `${file.size} KB` });
-    return;
-  }
-  createWindow(file.name, `<div class="content">${fakeFileBody(file, dirNode)}</div>`, {
-    status: `${file.size} KB`,
-  });
+  wm.openFile(file, dirNode, (PATH_BY_NODE.get(dirNode) || "") + "/" + file.name);
 }
 
 // ============================================================
@@ -793,6 +675,21 @@ void main() {
 }
 `;
 
+// composite the 2D UI canvas INTO the pipeline, before NTSC — the whole
+// interface lives inside the tube, like the movie's control app
+const COMPOSE_FRAG = `
+precision highp float;
+uniform sampler2D uScene;
+uniform sampler2D uUI;
+uniform vec2 resolution;
+void main() {
+  vec2 st = gl_FragCoord.xy / resolution;
+  vec4 s = texture2D(uScene, st);
+  vec4 u = texture2D(uUI, st);
+  gl_FragColor = vec4(mix(s.rgb, u.rgb, u.a), 1.0);
+}
+`;
+
 const COPY_FRAG = `
 precision highp float;
 uniform sampler2D uInput;
@@ -844,24 +741,56 @@ const ntscMat = shaderPass(NTSC_FRAG, {
 const tubeMat = shaderPass(TUBE_FRAG, {
   uInput: { value: null }, uHalo: { value: null }, resolution: { value: new THREE.Vector2() },
   uCurve: { value: 0.025 }, uBeam: { value: 0.55 }, uConverge: { value: 0.45 },
-  uHaloAmt: { value: 0.30 }, uMask: { value: 0.05 }, uGain: { value: 1.3 },
+  uHaloAmt: { value: 0.20 }, uMask: { value: 0.05 }, uGain: { value: 1.15 },
 });
 const copyMat = shaderPass(COPY_FRAG, { uInput: { value: null }, resolution: { value: new THREE.Vector2() } });
+const composeMat = shaderPass(COMPOSE_FRAG, {
+  uScene: { value: null }, uUI: { value: null }, resolution: { value: new THREE.Vector2() },
+});
 const blurMat = shaderPass(BLUR_FRAG, {
   uInput: { value: null }, resolution: { value: new THREE.Vector2() },
   uDir: { value: new THREE.Vector2(1, 0) }, uRadius: { value: 22 },
 });
 
-let rtScene, rtDecode, rtHaloA, rtHaloB;
+let rtScene, rtCompose, rtDecode, rtHaloA, rtHaloB;
 function makeTargets() {
   const w = window.innerWidth, h = window.innerHeight;
-  for (const rt of [rtScene, rtDecode, rtHaloA, rtHaloB]) rt && rt.dispose();
+  for (const rt of [rtScene, rtCompose, rtDecode, rtHaloA, rtHaloB]) rt && rt.dispose();
   rtScene = new THREE.WebGLRenderTarget(w, h, { depthBuffer: true });
+  rtCompose = new THREE.WebGLRenderTarget(w, h, { depthBuffer: false });
   rtDecode = new THREE.WebGLRenderTarget(w, h, { depthBuffer: false });
   rtHaloA = new THREE.WebGLRenderTarget(w >> 1, h >> 1, { depthBuffer: false });
   rtHaloB = new THREE.WebGLRenderTarget(w >> 1, h >> 1, { depthBuffer: false });
 }
 makeTargets();
+
+// ---------------- in-tube UI layer (2D canvas -> texture) ----------------
+const uiCanvas = document.createElement("canvas");
+const uiCtx = uiCanvas.getContext("2d");
+const uiTex = new THREE.CanvasTexture(uiCanvas);
+uiTex.minFilter = THREE.LinearFilter;
+const wm = new WinManager();
+let uiPath = "/usr";
+const HINT = "CLICK dir = fly · CLICK file = select · DBLCLICK/ENTER = open · WASD move · ←→ turn · R F up/down · SHIFT fast · rueda = zoom · drag = look · G shaders";
+function sizeUI() { uiCanvas.width = window.innerWidth; uiCanvas.height = window.innerHeight; }
+sizeUI();
+
+function drawUI(t) {
+  const w = uiCanvas.width, h = uiCanvas.height;
+  uiCtx.clearRect(0, 0, w, h);
+  wm.draw(uiCtx, t);
+  // path readout (in-tube, so the shader hits it too)
+  uiCtx.font = 'italic bold 15px "Courier New", monospace';
+  uiCtx.fillStyle = "#8ef0d0";
+  uiCtx.textAlign = "left";
+  uiCtx.fillText(uiPath, 14, 22);
+  uiCtx.font = '10px "Courier New", monospace';
+  uiCtx.fillStyle = "rgba(140,220,195,0.55)";
+  uiCtx.textAlign = "center";
+  uiCtx.fillText(HINT, w / 2, h - 8);
+  uiCtx.textAlign = "left";
+  uiTex.needsUpdate = true;
+}
 
 let postEnabled = true;
 window.addEventListener("keydown", (e) => {
@@ -879,16 +808,21 @@ function runPass(mat, target) {
 }
 
 function renderFrame(timeSec) {
-  if (!postEnabled) {
-    renderer.setRenderTarget(null);
-    renderer.render(scene, camera);
-    return;
-  }
+  drawUI(timeSec);
   // 1. scene
   renderer.setRenderTarget(rtScene);
   renderer.render(scene, camera);
+  // 1b. composite UI canvas over the scene (inside the tube)
+  composeMat.uniforms.uScene.value = rtScene.texture;
+  composeMat.uniforms.uUI.value = uiTex;
+  if (!postEnabled) {
+    runPass(composeMat, null);
+    renderer.setRenderTarget(null);
+    return;
+  }
+  runPass(composeMat, rtCompose);
   // 2. ntsc decode at full res (full-res input keeps distant text readable)
-  ntscMat.uniforms.uInput.value = rtScene.texture;
+  ntscMat.uniforms.uInput.value = rtCompose.texture;
   ntscMat.uniforms.time.value = timeSec;
   runPass(ntscMat, rtDecode);
   // 4. halation: blur decode at half res (H then V)
@@ -1017,6 +951,7 @@ window.addEventListener("resize", () => {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
   makeTargets();
+  sizeUI();
 });
 
 // debug handle
@@ -1035,8 +970,6 @@ window.JP = {
   if (park) {
     nav.pos.set(park.position.x, 15, park.position.z + park.platD / 2 + 34);
     nav.pitch = -0.30;
-    document.getElementById("pathbar").textContent = PATH_BY_NODE.get(park.node);
-  } else {
-    document.getElementById("pathbar").textContent = "/usr";
+    setPath(PATH_BY_NODE.get(park.node));
   }
 }
