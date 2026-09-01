@@ -461,13 +461,22 @@ window.addEventListener("pointermove", (e) => {
   flyAnim = null;
 });
 
+let lastTap = { t: 0, x: 0, y: 0 };
 function endPointer(e) {
   const pt = pointers.get(e.pointerId);
   if (!pt) return;
   pointers.delete(e.pointerId);
   if (pt.role === "ui") { wm.up(e.clientX, e.clientY); return; }
   if (pt.role === "joy") { joy.active = false; joy.dx = 0; joy.dy = 0; return; }
-  if (e.type === "pointerup" && pt.moved <= 6) pick(e.clientX, e.clientY, false);
+  if (e.type === "pointerup" && pt.moved <= 6) {
+    // browsers don't synthesize dblclick from touch here, so detect double-tap ourselves
+    const now = performance.now();
+    const isDouble = e.pointerType === "touch"
+      && now - lastTap.t < 400
+      && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 36;
+    lastTap = { t: isDouble ? 0 : now, x: e.clientX, y: e.clientY };
+    pick(e.clientX, e.clientY, isDouble);
+  }
 }
 window.addEventListener("pointerup", endPointer);
 window.addEventListener("pointercancel", endPointer);
