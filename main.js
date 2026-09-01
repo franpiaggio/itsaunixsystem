@@ -4,7 +4,8 @@
 // ============================================================
 import * as THREE from "three";
 import { FS_ROOT } from "./data.js";
-import { WinManager } from "./windows.js?v=25";
+import GUI from "lil-gui";
+import { WinManager } from "./windows.js?v=26";
 
 // ---------------- palette (sampled from movie stills) ----------------
 const COL = {
@@ -639,13 +640,11 @@ void main() {
   vec2 st = gl_FragCoord.xy / resolution;
   vec2 p = st * 2.0 - 1.0;
   float r2 = dot(p, p);
-  // normalized barrel: corners map exactly to the frame edge, nothing samples
-  // outside the picture (no cropped/ghosted first rows)
-  vec2 q = (p * (1.0 + uCurve * r2) / (1.0 + 2.0 * uCurve)) * 0.5 + 0.5;
+  vec2 q = (p * (1.0 + uCurve * r2)) * 0.5 + 0.5;
 
   float dx = (q.x - 0.5) * r2 * 0.012 * uConverge;
 
-  float lines = resolution.y / 2.5;
+  float lines = resolution.y / 3.0;
   vec3 acc = vec3(0.0);
   for (int i = -1; i <= 1; i++) {
     float lineY = (floor(q.y * lines) + float(i) + 0.5) / lines;
@@ -655,7 +654,7 @@ void main() {
       texture2D(uInput, vec2(q.x, lineY)).g,
       texture2D(uInput, vec2(q.x + dx, lineY)).b);
     float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
-    float sigma = 0.36 + 0.6 * uBeam * lum;
+    float sigma = 0.22 + 0.6 * uBeam * lum;
     acc += c * exp(-dy * dy / (2.0 * sigma * sigma));
   }
 
@@ -669,9 +668,9 @@ void main() {
       : vec3(1.0 - uMask, 1.0 - uMask, 1.0);
   col *= grille * (1.0 + uMask * 0.4);
 
-  vec2 edge = smoothstep(0.0, 0.0025, q) * (1.0 - smoothstep(0.9975, 1.0, q));
+  vec2 edge = smoothstep(0.0, 0.012, q) * (1.0 - smoothstep(0.988, 1.0, q));
   col *= edge.x * edge.y;
-  col *= 1.0 - 0.07 * smoothstep(0.8, 1.9, r2);
+  col *= 1.0 - 0.3 * smoothstep(0.5, 1.6, r2);
 
   gl_FragColor = vec4(col, texture2D(uInput, q).a);
 }
@@ -742,8 +741,8 @@ const ntscMat = shaderPass(NTSC_FRAG, {
 });
 const tubeMat = shaderPass(TUBE_FRAG, {
   uInput: { value: null }, uHalo: { value: null }, resolution: { value: new THREE.Vector2() },
-  uCurve: { value: 0.012 }, uBeam: { value: 0.55 }, uConverge: { value: 0.22 },
-  uHaloAmt: { value: 0.14 }, uMask: { value: 0.05 }, uGain: { value: 1.12 },
+  uCurve: { value: 0.03 }, uBeam: { value: 0.5 }, uConverge: { value: 0.22 },
+  uHaloAmt: { value: 0.12 }, uMask: { value: 0.05 }, uGain: { value: 1.0 },
 });
 const copyMat = shaderPass(COPY_FRAG, { uInput: { value: null }, resolution: { value: new THREE.Vector2() } });
 const composeMat = shaderPass(COMPOSE_FRAG, {
@@ -773,7 +772,7 @@ const uiTex = new THREE.CanvasTexture(uiCanvas);
 uiTex.minFilter = THREE.LinearFilter;
 const wm = new WinManager();
 let uiPath = "/usr";
-const HINT = "CLICK dir = fly · CLICK file = select · DBLCLICK/ENTER = open · WASD move · ←→ turn · R F up/down · SHIFT fast · rueda = zoom · drag = look · G shaders";
+const HINT = "CLICK dir = fly · CLICK file = select · DBLCLICK/ENTER = open · WASD move · ←→ turn · R F up/down · SHIFT fast · rueda = zoom · drag = look · O tweaks";
 function sizeUI() { uiCanvas.width = window.innerWidth; uiCanvas.height = window.innerHeight; }
 sizeUI();
 
@@ -845,94 +844,55 @@ function renderFrame(timeSec) {
   renderer.setRenderTarget(null);
 }
 
-// ---------------- shader GUI (toggle: G) ----------------
-const GUI_DEFS = [
-  ["NTSC", ntscMat, [
-    ["uMix", "mix (dry/wet)", 0, 1, 0.01],
-    ["uBleed", "bleed", 0, 2, 0.01],
-    ["uFringe", "fringe", 0, 1, 0.01],
-    ["uJitter", "jitter", 0, 1, 0.01],
-    ["uCrawl", "crawl", 0, 2, 0.01],
-    ["uNoise", "noise", 0, 0.3, 0.005],
-    ["uPull", "pull", 0, 1, 0.01],
-    ["uTear", "tear", 0, 1, 0.01],
-    ["uSat", "saturation", 0, 1.5, 0.01],
-  ]],
-  ["TUBE", tubeMat, [
-    ["uCurve", "curve", 0, 0.3, 0.005],
-    ["uBeam", "beam", 0, 1, 0.01],
-    ["uConverge", "converge", 0, 1, 0.01],
-    ["uHaloAmt", "halo", 0, 1, 0.01],
-    ["uMask", "mask", 0, 0.5, 0.005],
-    ["uGain", "gain", 0.5, 2, 0.01],
-  ]],
+// ---------------- shader GUI (lil-gui, outside the render — toggle: O) ----------------
+const NTSC_DEFS = [
+  ["uMix", "mix (dry/wet)", 0, 1, 0.01],
+  ["uBleed", "bleed", 0, 2, 0.01],
+  ["uFringe", "fringe", 0, 1, 0.01],
+  ["uJitter", "jitter", 0, 1, 0.01],
+  ["uCrawl", "crawl", 0, 2, 0.01],
+  ["uNoise", "noise", 0, 0.3, 0.005],
+  ["uPull", "pull", 0, 1, 0.01],
+  ["uTear", "tear", 0, 1, 0.01],
+  ["uSat", "saturation", 0, 1.5, 0.01],
+];
+const TUBE_DEFS = [
+  ["uCurve", "curve", 0, 0.3, 0.005],
+  ["uBeam", "beam", 0, 1, 0.01],
+  ["uConverge", "converge", 0, 1, 0.01],
+  ["uHaloAmt", "halo", 0, 1, 0.01],
+  ["uMask", "mask", 0, 0.5, 0.005],
+  ["uGain", "gain", 0.5, 2, 0.01],
 ];
 
-function buildShaderGUI() {
-  const el = document.createElement("div");
-  el.className = "win98";
-  el.id = "shadergui";
-  el.style.left = "auto";
-  el.style.right = "16px";
-  el.style.top = "40px";
-  el.style.minWidth = "270px";
-  el.style.zIndex = 500;
-  let rows = "";
-  for (const [section, , params] of GUI_DEFS) {
-    rows += `<div style="font-weight:bold;margin:6px 0 2px">${section}</div>`;
-    for (const [key, label, min, max, step] of params) {
-      rows += `
-        <div style="display:flex;align-items:center;gap:6px;margin:1px 0">
-          <span style="flex:0 0 92px;font-size:11px">${label}</span>
-          <input type="range" data-sec="${section}" data-key="${key}" min="${min}" max="${max}" step="${step}" style="flex:1">
-          <span class="val" data-for="${section}.${key}" style="flex:0 0 40px;font-size:11px;text-align:right"></span>
-        </div>`;
-    }
-  }
-  el.innerHTML = `
-    <div class="titlebar"><span class="title">Shader Control</span><div class="btn btn-close">✕</div></div>
-    <div class="content gray" style="max-height:70vh">${rows}
-      <div class="btnrow">
-        <div class="b98" id="sg-copy">COPY PARAMS</div>
-        <div class="b98" id="sg-post">POST ON/OFF</div>
-      </div>
-      <div id="sg-msg" style="text-align:center;font-size:10px;margin-top:4px">&nbsp;</div>
-    </div>`;
-  document.getElementById("windows").appendChild(el);
-  el.hidden = true;
-
-  const matOf = (sec) => GUI_DEFS.find((d) => d[0] === sec)[1];
-  el.querySelectorAll("input[type=range]").forEach((inp) => {
-    const sec = inp.dataset.sec, key = inp.dataset.key;
-    const u = matOf(sec).uniforms[key];
-    inp.value = u.value;
-    const valEl = el.querySelector(`.val[data-for="${sec}.${key}"]`);
-    valEl.textContent = Number(u.value).toFixed(2);
-    inp.addEventListener("input", () => {
-      u.value = parseFloat(inp.value);
-      valEl.textContent = Number(inp.value).toFixed(2);
-    });
-  });
-  el.querySelector(".btn-close").addEventListener("click", () => (el.hidden = true));
-  el.querySelector("#sg-post").addEventListener("click", () => (postEnabled = !postEnabled));
-  el.querySelector("#sg-copy").addEventListener("click", () => {
-    const out = {};
-    for (const [section, mat, params] of GUI_DEFS) {
-      out[section.toLowerCase()] = {};
-      for (const [key] of params) out[section.toLowerCase()][key] = +mat.uniforms[key].value.toFixed(3);
-    }
-    const txt = JSON.stringify(out, null, 2);
-    navigator.clipboard.writeText(txt).catch(() => {});
-    el.querySelector("#sg-msg").textContent = "copiado al clipboard";
-    console.log("[shader params]", txt);
-  });
-  el.addEventListener("wheel", (e) => e.stopPropagation());
-  return el;
+const gui = new GUI({ title: "JP CRT tweaks" });
+{
+  const fN = gui.addFolder("NTSC");
+  for (const [key, label, min, max, step] of NTSC_DEFS)
+    fN.add(ntscMat.uniforms[key], "value", min, max, step).name(label);
+  const fT = gui.addFolder("TUBE");
+  for (const [key, label, min, max, step] of TUBE_DEFS)
+    fT.add(tubeMat.uniforms[key], "value", min, max, step).name(label);
+  const misc = {
+    post: true,
+    copyParams() {
+      const out = { ntsc: {}, tube: {} };
+      for (const [key] of NTSC_DEFS) out.ntsc[key] = +ntscMat.uniforms[key].value.toFixed(3);
+      for (const [key] of TUBE_DEFS) out.tube[key] = +tubeMat.uniforms[key].value.toFixed(3);
+      const txt = JSON.stringify(out, null, 2);
+      navigator.clipboard.writeText(txt).catch(() => {});
+      console.log("[shader params]", txt);
+    },
+  };
+  gui.add(misc, "post").name("post FX on").onChange((v) => (postEnabled = v));
+  gui.add(misc, "copyParams").name("copy params to clipboard");
+  gui.hide();
 }
-const shaderGUI = buildShaderGUI();
+let guiVisible = false;
 window.addEventListener("keydown", (e) => {
-  if (e.code === "KeyG" && !(e.target.closest && e.target.closest(".win98"))) {
-    shaderGUI.hidden = !shaderGUI.hidden;
+  if (e.code === "KeyO" && !(e.target.closest && e.target.closest(".lil-gui"))) {
+    guiVisible = !guiVisible;
+    guiVisible ? gui.show() : gui.hide();
   }
 });
 

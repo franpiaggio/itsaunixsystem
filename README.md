@@ -32,6 +32,7 @@ Three.js is loaded from CDN (jsdelivr), so you need network on first load.
 | Mouse drag | Free look |
 | `Esc` | Clear selection |
 | `P` | Toggle CRT shaders (NTSC + tube) |
+| `O` | lil-gui tweak panel (shader params, outside the render) |
 
 ## Files
 
