@@ -418,34 +418,71 @@ window.addEventListener("keyup", (e) => (keys[e.code] = false));
 // mouse: drag look + click pick
 const raycaster = new THREE.Raycaster();
 const mouseNDC = new THREE.Vector2();
-let dragging = false, dragMoved = 0, lastX = 0, lastY = 0, pressedOnCanvas = false, uiCapture = false;
+// ---- multi-pointer input: each pointer gets a role ----
+//   "ui"   -> grabbed by an in-tube window (drag/click it)
+//   "joy"  -> virtual joystick (touch move control)
+//   "look" -> free look; a short tap picks
+const pointers = new Map();
+const IS_COARSE = window.matchMedia("(pointer: coarse)").matches;
+const joy = { active: false, dx: 0, dy: 0, R: 54 };
+function joyCenter() {
+  return { x: 96, y: window.innerHeight - 110 };
+}
 
 canvas.addEventListener("pointerdown", (e) => {
-  if (wm.down(e.clientX, e.clientY)) { uiCapture = true; return; } // in-tube window grabbed it
-  dragging = true; pressedOnCanvas = true; dragMoved = 0; lastX = e.clientX; lastY = e.clientY;
+  const x = e.clientX, y = e.clientY;
+  if (wm.down(x, y)) { pointers.set(e.pointerId, { role: "ui" }); return; }
+  if (IS_COARSE && e.pointerType === "touch") {
+    const c = joyCenter();
+    if (Math.hypot(x - c.x, y - c.y) < joy.R * 1.8) {
+      pointers.set(e.pointerId, { role: "joy" });
+      joy.active = true; joy.dx = 0; joy.dy = 0;
+      return;
+    }
+  }
+  pointers.set(e.pointerId, { role: "look", lastX: x, lastY: y, moved: 0 });
 });
+
 window.addEventListener("pointermove", (e) => {
-  if (uiCapture) { wm.move(e.clientX, e.clientY); return; }
-  if (!dragging) return;
-  const dx = e.clientX - lastX, dy = e.clientY - lastY;
-  dragMoved += Math.abs(dx) + Math.abs(dy);
-  lastX = e.clientX; lastY = e.clientY;
+  const pt = pointers.get(e.pointerId);
+  if (!pt) return;
+  if (pt.role === "ui") { wm.move(e.clientX, e.clientY); return; }
+  if (pt.role === "joy") {
+    const c = joyCenter();
+    joy.dx = THREE.MathUtils.clamp((e.clientX - c.x) / joy.R, -1, 1);
+    joy.dy = THREE.MathUtils.clamp((e.clientY - c.y) / joy.R, -1, 1);
+    return;
+  }
+  const dx = e.clientX - pt.lastX, dy = e.clientY - pt.lastY;
+  pt.moved += Math.abs(dx) + Math.abs(dy);
+  pt.lastX = e.clientX; pt.lastY = e.clientY;
   nav.yaw -= dx * 0.0035;
   nav.pitch = THREE.MathUtils.clamp(nav.pitch - dy * 0.0030, -1.2, 0.5);
   flyAnim = null;
 });
-window.addEventListener("pointerup", (e) => {
-  if (uiCapture) { wm.up(e.clientX, e.clientY); uiCapture = false; return; }
-  dragging = false;
-  if (!pressedOnCanvas) return; // stray pointerup (focus click, window switch)
-  pressedOnCanvas = false;
-  if (dragMoved > 6) return; // it was a drag, not a click
-  pick(e.clientX, e.clientY, false);
-});
+
+function endPointer(e) {
+  const pt = pointers.get(e.pointerId);
+  if (!pt) return;
+  pointers.delete(e.pointerId);
+  if (pt.role === "ui") { wm.up(e.clientX, e.clientY); return; }
+  if (pt.role === "joy") { joy.active = false; joy.dx = 0; joy.dy = 0; return; }
+  if (e.type === "pointerup" && pt.moved <= 6) pick(e.clientX, e.clientY, false);
+}
+window.addEventListener("pointerup", endPointer);
+window.addEventListener("pointercancel", endPointer);
+
 canvas.addEventListener("dblclick", (e) => {
   if (wm.top(e.clientX, e.clientY)) return;
   pick(e.clientX, e.clientY, true);
 });
+
+// keep iOS from pinch/double-tap zooming the page
+document.addEventListener("gesturestart", (e) => e.preventDefault());
+document.addEventListener("gesturechange", (e) => e.preventDefault());
+document.addEventListener("touchmove", (e) => {
+  if (e.scale !== undefined && e.scale !== 1) e.preventDefault();
+}, { passive: false });
 
 // wheel / trackpad scroll = dolly zoom along the view direction
 canvas.addEventListener("wheel", (e) => {
@@ -499,6 +536,11 @@ function stepNav(dt) {
   if (keys["ArrowRight"]) nav.yaw -= 1.4 * dt;
   if (keys["KeyR"] || keys["KeyQ"]) nav.pos.y += sp;
   if (keys["KeyF"] || keys["KeyE"]) nav.pos.y -= sp;
+  // virtual joystick (touch): up = forward, sideways = strafe
+  if (joy.active) {
+    nav.pos.addScaledVector(fwd, -joy.dy * nav.speed * dt * 1.5);
+    nav.pos.addScaledVector(right, joy.dx * nav.speed * dt * 1.2);
+  }
   nav.pos.y = Math.max(2.2, nav.pos.y);
 }
 
@@ -790,6 +832,16 @@ function drawUI(t) {
   uiCtx.textAlign = "center";
   uiCtx.fillText(HINT, w / 2, h - 8);
   uiCtx.textAlign = "left";
+  // virtual joystick (touch devices)
+  if (IS_COARSE) {
+    const c = joyCenter();
+    uiCtx.strokeStyle = "rgba(140,240,208,0.4)";
+    uiCtx.lineWidth = 2;
+    uiCtx.beginPath(); uiCtx.arc(c.x, c.y, joy.R, 0, Math.PI * 2); uiCtx.stroke();
+    const kx = c.x + joy.dx * joy.R * 0.6, ky = c.y + joy.dy * joy.R * 0.6;
+    uiCtx.fillStyle = joy.active ? "rgba(140,240,208,0.55)" : "rgba(140,240,208,0.28)";
+    uiCtx.beginPath(); uiCtx.arc(kx, ky, joy.R * 0.42, 0, Math.PI * 2); uiCtx.fill();
+  }
   uiTex.needsUpdate = true;
 }
 
@@ -920,13 +972,16 @@ function tick() {
 }
 setInterval(tick, STEP);
 
-window.addEventListener("resize", () => {
+function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
   makeTargets();
   sizeUI();
-});
+}
+window.addEventListener("resize", onResize);
+window.addEventListener("orientationchange", () => setTimeout(onResize, 250));
+if (window.visualViewport) window.visualViewport.addEventListener("resize", onResize);
 
 // debug handle
 window.JP = {
