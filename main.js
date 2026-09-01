@@ -808,25 +808,32 @@ function runPass(mat, target) {
   renderer.render(postScene, postCam);
 }
 
+let ntscOn = true, tubeOn = true; // per-shader toggles (lil-gui checkboxes)
+
 function renderFrame(timeSec) {
   drawUI(timeSec);
   // 1. scene
   renderer.setRenderTarget(rtScene);
   renderer.render(scene, camera);
   composeMat.uniforms.uUI.value = uiTex;
-  if (!postEnabled) {
-    composeMat.uniforms.uScene.value = rtScene.texture;
+  const useNtsc = postEnabled && ntscOn;
+  const useTube = postEnabled && tubeOn;
+  // 2. ntsc decode on the 3D scene only (the UI skips the composite-signal
+  // smear so windows stay readable, but still goes through the tube below)
+  let sceneTex = rtScene.texture;
+  if (useNtsc) {
+    ntscMat.uniforms.uInput.value = rtScene.texture;
+    ntscMat.uniforms.time.value = timeSec;
+    runPass(ntscMat, rtDecode);
+    sceneTex = rtDecode.texture;
+  }
+  // 3. composite the UI over the (decoded) scene
+  composeMat.uniforms.uScene.value = sceneTex;
+  if (!useTube) {
     runPass(composeMat, null);
     renderer.setRenderTarget(null);
     return;
   }
-  // 2. ntsc decode on the 3D scene only (the UI skips the composite-signal
-  // smear so windows stay readable, but still goes through the tube below)
-  ntscMat.uniforms.uInput.value = rtScene.texture;
-  ntscMat.uniforms.time.value = timeSec;
-  runPass(ntscMat, rtDecode);
-  // 3. composite the UI over the decoded scene (post-NTSC, pre-tube)
-  composeMat.uniforms.uScene.value = rtDecode.texture;
   runPass(composeMat, rtCompose);
   // 4. halation: blur the composite at half res (H then V)
   copyMat.uniforms.uInput.value = rtCompose.texture;
@@ -867,10 +874,13 @@ const TUBE_DEFS = [
 
 const gui = new GUI({ title: "JP CRT tweaks" });
 {
+  const toggles = { ntsc: true, tube: true };
   const fN = gui.addFolder("NTSC");
+  fN.add(toggles, "ntsc").name("enabled").onChange((v) => (ntscOn = v));
   for (const [key, label, min, max, step] of NTSC_DEFS)
     fN.add(ntscMat.uniforms[key], "value", min, max, step).name(label);
   const fT = gui.addFolder("TUBE");
+  fT.add(toggles, "tube").name("enabled").onChange((v) => (tubeOn = v));
   for (const [key, label, min, max, step] of TUBE_DEFS)
     fT.add(tubeMat.uniforms[key], "value", min, max, step).name(label);
   const misc = {
