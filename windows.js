@@ -200,9 +200,9 @@ const DRAW = {
     const n = 4 + Math.floor(rng() * 3);
     const slots = [0, 1, 2, 3, 4, 5, 6, 7, 8].sort(() => rng() - 0.5).slice(0, n);
     for (let i = 0; i < n; i++) {
-      const col = slots[i] % 3, row = Math.floor(slots[i] / 3);
-      const lx = x + 24 + col * ((w - 90) / 2) + rng() * 14;
-      const ly = my + 22 + row * ((mh - 44) / 2) + rng() * 10;
+      const gcol = slots[i] % 3, grow = Math.floor(slots[i] / 3);
+      const lx = x + 24 + gcol * ((w - 90) / 2) + rng() * 14;
+      const ly = my + 22 + grow * ((mh - 44) / 2) + rng() * 10;
       const col = secured ? P.greenBright : P.salmon;
       ctx.fillStyle = col;
       ctx.beginPath(); ctx.arc(lx, ly, 7, 0, Math.PI * 2); ctx.fill();

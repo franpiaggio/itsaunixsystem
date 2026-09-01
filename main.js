@@ -4,7 +4,7 @@
 // ============================================================
 import * as THREE from "three";
 import { FS_ROOT } from "./data.js";
-import { WinManager } from "./windows.js?v=24";
+import { WinManager } from "./windows.js?v=25";
 
 // ---------------- palette (sampled from movie stills) ----------------
 const COL = {
