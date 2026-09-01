@@ -808,7 +808,7 @@ function runPass(mat, target) {
   renderer.render(postScene, postCam);
 }
 
-let ntscOn = true, tubeOn = true; // per-shader toggles (lil-gui checkboxes)
+let ntscOn = true, tubeOn = false; // per-shader toggles (lil-gui checkboxes)
 
 function renderFrame(timeSec) {
   drawUI(timeSec);
@@ -874,7 +874,7 @@ const TUBE_DEFS = [
 
 const gui = new GUI({ title: "JP CRT tweaks" });
 {
-  const toggles = { ntsc: true, tube: true };
+  const toggles = { ntsc: true, tube: false };
   const fN = gui.addFolder("NTSC");
   fN.add(toggles, "ntsc").name("enabled").onChange((v) => (ntscOn = v));
   for (const [key, label, min, max, step] of NTSC_DEFS)
